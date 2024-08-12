@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.13 FATAL_ERROR)
 
+# Only Linux allows raw SPI access so far
+find_path(LINUX_HEADERS_INCLUDE_DIR linux/types.h)
+if(NOT LINUX_HEADERS_INCLUDE_DIR)
+  return()
+endif()
+if(APPLE OR EMSCRIPTEN OR WIN32)
+  return()
+endif()
 if(NOT TARGET score_lib_base)
   include("${SCORE_SOURCE_DIR}/cmake/ScoreExternalAddon.cmake")
 endif()
