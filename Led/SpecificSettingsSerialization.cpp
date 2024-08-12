@@ -6,14 +6,14 @@
 template <>
 void DataStreamReader::read(const Led::SpecificSettings& n)
 {
-  m_stream << n.device << n.num_pixels << n.speed << n.format;
+  m_stream << n.device << n.num_pixels << n.speed << n.format << n.fps;
   insertDelimiter();
 }
 
 template <>
 void DataStreamWriter::write(Led::SpecificSettings& n)
 {
-  m_stream >> n.device >> n.num_pixels >> n.speed >> n.format;
+  m_stream >> n.device >> n.num_pixels >> n.speed >> n.format >> n.fps;
   checkDelimiter();
 }
 
@@ -24,6 +24,7 @@ void JSONReader::read(const Led::SpecificSettings& n)
   obj["Pixels"] = n.num_pixels;
   obj["Speed"] = n.speed;
   obj["Format"] = n.format;
+  obj["FPS"] = n.fps;
 }
 
 template <>
@@ -33,4 +34,5 @@ void JSONWriter::write(Led::SpecificSettings& n)
   n.num_pixels <<= obj["Pixels"];
   n.speed <<= obj["Speed"];
   n.format <<= obj["Format"];
+  n.fps <<= obj["FPS"];
 }

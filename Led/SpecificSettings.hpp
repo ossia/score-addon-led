@@ -17,6 +17,7 @@ struct SpecificSettings
     int num_pixels{12};
     int speed{800};
     NeoPixelsFormat format{NeoPixelsFormat::GRB};
+    float fps{60.f};
 };
 }
 

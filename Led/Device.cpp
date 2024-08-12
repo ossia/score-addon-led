@@ -74,9 +74,11 @@ struct led_protocol : public ossia::net::protocol_base
       return;
     }
 
-    constexpr float frequency = 60;
-    m_timer.set_delay(std::chrono::milliseconds{
-        static_cast<int>(1000.0f / static_cast<float>(frequency))});
+    auto fps = std::clamp(set.fps, 0.001f, 1000.f);
+    if (set.fps <= 0.f)
+      fps = 30.;
+    m_timer.set_delay(
+        std::chrono::milliseconds{static_cast<int>(1000.0f / fps)});
   }
 
   ~led_protocol()

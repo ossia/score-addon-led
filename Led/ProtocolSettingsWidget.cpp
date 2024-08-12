@@ -47,11 +47,16 @@ ProtocolSettingsWidget::ProtocolSettingsWidget(QWidget* parent)
   m_format = new QComboBox{this};
   m_format->addItems({"GRB", "RGB"});
 
+  m_fps = new QDoubleSpinBox{this};
+  m_fps->setRange(0.001, 1000);
+  m_fps->setValue(60.);
+
   auto layout = new QFormLayout;
   layout->addRow(tr("Name"), m_deviceNameEdit);
   layout->addRow(tr("Device"), m_spiDevice);
   layout->addRow(tr("Pixels"), m_pixels);
   layout->addRow(tr("Format"), m_format);
+  layout->addRow(tr("FPS"), m_fps);
 
   setLayout(layout);
 }
@@ -69,6 +74,7 @@ Device::DeviceSettings ProtocolSettingsWidget::getSettings() const
   settings.num_pixels = this->m_pixels->value();
   settings.format
       = static_cast<NeoPixelsFormat>(this->m_format->currentIndex());
+  settings.fps = this->m_fps->value();
   s.deviceSpecificSettings = QVariant::fromValue(settings);
 
   return s;
@@ -83,5 +89,6 @@ void ProtocolSettingsWidget::setSettings(
   m_spiDevice->setText(specif.device);
   m_pixels->setValue(specif.num_pixels);
   m_format->setCurrentIndex(static_cast<int>(specif.format));
+  m_fps->setValue(specif.fps);
 }
 }

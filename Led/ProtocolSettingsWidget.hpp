@@ -8,6 +8,7 @@
 
 class QLineEdit;
 class QSpinBox;
+class QDoubleSpinBox;
 class QTableWidget;
 class QPushButton;
 
@@ -28,5 +29,6 @@ private:
   QLineEdit* m_spiDevice{};
   QSpinBox* m_pixels{};
   QComboBox* m_format{};
+  QDoubleSpinBox* m_fps{};
 };
 }
