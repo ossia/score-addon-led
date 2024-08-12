@@ -74,7 +74,7 @@ struct led_protocol : public ossia::net::protocol_base
       return;
     }
 
-    constexpr float frequency = 10;
+    constexpr float frequency = 60;
     m_timer.set_delay(std::chrono::milliseconds{
         static_cast<int>(1000.0f / static_cast<float>(frequency))});
   }
@@ -91,21 +91,23 @@ struct led_protocol : public ossia::net::protocol_base
 
     auto& root = m_device->get_root_node();
 
-    strip = ossia::create_parameter(root, "/leds", "list");
+    strip = root.create_child("leds");
     for (int i = 0; i < m_pixels; i++)
     {
-      pixels.push_back(ossia::create_parameter(
-          strip->get_node(), std::to_string(i), "rgb"));
+      auto node = strip->create_child(std::to_string(i));
+      auto param = node->create_parameter(ossia::val_type::VEC3F);
+      param->set_unit(ossia::rgb_u{});
     }
+
     if (m_fd >= 0)
     {
+      m_bitbang_data.resize(m_pixels * 24, boost::container::default_init);
       switch (m_format)
       {
         case NeoPixelsFormat::GRB:
           m_timer.start(
               [this]
               {
-                init_bitbang();
                 update_function_grb();
                 push_to_spi();
               });
@@ -114,31 +116,12 @@ struct led_protocol : public ossia::net::protocol_base
           m_timer.start(
               [this]
               {
-                init_bitbang();
                 update_function_rgb();
                 push_to_spi();
               });
           break;
       }
     }
-  }
-
-  static auto rgb_to_bitbang(uint8_t r, uint8_t g, uint8_t b) noexcept
-  {
-    using namespace std;
-    const auto r_array = int_to_neopixel(r);
-    const auto g_array = int_to_neopixel(g);
-    const auto b_array = int_to_neopixel(b);
-
-    std::array<uint8_t, 24> fullColor;
-#pragma omp simd
-    for (int cnt = 0; cnt < 8; ++cnt)
-    {
-      fullColor[cnt + 0] = r_array[cnt];
-      fullColor[cnt + 8] = g_array[cnt];
-      fullColor[cnt + 16] = b_array[cnt];
-    }
-    return fullColor;
   }
 
   bool pull(ossia::net::parameter_base& v) override { return false; }
@@ -158,12 +141,6 @@ struct led_protocol : public ossia::net::protocol_base
 
   bool update(ossia::net::node_base& node_base) override { return false; }
 
-  void init_bitbang()
-  {
-    m_bitbang_data.clear();
-    m_bitbang_data.reserve(m_pixels * 24);
-  }
-
   void push_to_spi()
   {
     struct spi_ioc_transfer spi;
@@ -179,50 +156,46 @@ struct led_protocol : public ossia::net::protocol_base
   void update_function_rgb()
   {
     const int N = std::min(m_pixels, (int)std::ssize(pixels));
-#pragma omp simd
+
     for (int i = 0; i < N; i++)
     {
-      auto col = ossia::convert<ossia::vec3f>(pixels[i]->value());
+      const auto& val = pixels[i]->value();
+      if (auto col = val.target<ossia::vec3f>())
+      {
+        // 1. ossia::vec3f to basic rgb
+        const uint8_t r = std::clamp((*col)[0], 0.f, 1.f) * 255.0f;
+        const uint8_t g = std::clamp((*col)[1], 0.f, 1.f) * 255.0f;
+        const uint8_t b = std::clamp((*col)[2], 0.f, 1.f) * 255.0f;
 
-      // 1. ossia::vec3f to basic rgb
-      const uint8_t r = std::clamp(col[0], 0.f, 1.f) * 255;
-      const uint8_t g = std::clamp(col[1], 0.f, 1.f) * 255;
-      const uint8_t b = std::clamp(col[2], 0.f, 1.f) * 255;
-
-      // 2. rgb to bitbangable rgb
-      const auto& r_array = int_to_neopixel_table[r];
-      const auto& g_array = int_to_neopixel_table[g];
-      const auto& b_array = int_to_neopixel_table[b];
-
-      uint8_t* data = m_bitbang_data.data() + i * 24;
-      std::copy_n(r_array.data(), 8, data);
-      std::copy_n(g_array.data(), 8, data + 8);
-      std::copy_n(b_array.data(), 8, data + 16);
+        // 2. rgb to bitbangable rgb
+        uint8_t* data = m_bitbang_data.data() + i * 24;
+        std::copy_n(int_to_neopixel_table[r].data(), 8, data);
+        std::copy_n(int_to_neopixel_table[g].data(), 8, data + 8);
+        std::copy_n(int_to_neopixel_table[b].data(), 8, data + 16);
+      }
     }
   }
 
   void update_function_grb()
   {
     const int N = std::min(m_pixels, (int)std::ssize(pixels));
-#pragma omp simd
+
     for (int i = 0; i < N; i++)
     {
-      auto col = ossia::convert<ossia::vec3f>(pixels[i]->value());
+      const auto& val = pixels[i]->value();
+      if (auto col = val.target<ossia::vec3f>())
+      {
+        // 1. ossia::vec3f to basic rgb
+        const uint8_t r = std::clamp((*col)[0], 0.f, 1.f) * 255.0f;
+        const uint8_t g = std::clamp((*col)[1], 0.f, 1.f) * 255.0f;
+        const uint8_t b = std::clamp((*col)[2], 0.f, 1.f) * 255.0f;
 
-      // 1. ossia::vec3f to basic rgb
-      const uint8_t g = std::clamp(col[1], 0.f, 1.f) * 255;
-      const uint8_t r = std::clamp(col[0], 0.f, 1.f) * 255;
-      const uint8_t b = std::clamp(col[2], 0.f, 1.f) * 255;
-
-      // 2. rgb to bitbangable grb
-      const auto& g_array = int_to_neopixel_table[g];
-      const auto& r_array = int_to_neopixel_table[r];
-      const auto& b_array = int_to_neopixel_table[b];
-
-      uint8_t* data = m_bitbang_data.data() + i * 24;
-      std::copy_n(g_array.data(), 8, data);
-      std::copy_n(r_array.data(), 8, data + 8);
-      std::copy_n(b_array.data(), 8, data + 16);
+        // 2. rgb to bitbangable grb
+        uint8_t* data = m_bitbang_data.data() + i * 24;
+        std::copy_n(int_to_neopixel_table[g].data(), 8, data);
+        std::copy_n(int_to_neopixel_table[r].data(), 8, data + 8);
+        std::copy_n(int_to_neopixel_table[b].data(), 8, data + 16);
+      }
     }
   }
 
@@ -234,8 +207,8 @@ struct led_protocol : public ossia::net::protocol_base
   int m_speed{};
   NeoPixelsFormat m_format{};
 
-  std::vector<uint8_t> m_bitbang_data;
-  ossia::net::parameter_base* strip{};
+  ossia::pod_vector<uint8_t> m_bitbang_data;
+  ossia::net::node_base* strip{};
   std::vector<ossia::net::parameter_base*> pixels;
   int m_fd{-1};
 };
