@@ -43,8 +43,11 @@ struct led_protocol : public ossia::net::protocol_base
 
     using namespace std::literals;
     m_fd = ::open(set.device.toStdString().c_str(), O_RDWR);
-    if (m_fd != 0)
-      throw std::runtime_error("Could not open "s + set.device.toStdString());
+    if (m_fd < 0)
+    {
+      qDebug() << "Could not open " + set.device;
+      return;
+    }
 
     constexpr float frequency = 10;
     m_timer.set_delay(std::chrono::milliseconds{
@@ -63,8 +66,14 @@ struct led_protocol : public ossia::net::protocol_base
 
     auto& root = m_device->get_root_node();
 
-    strip = ossia::create_parameter(root, "/strip", "list");
-    m_timer.start([this] { update_function(); });
+    strip = ossia::create_parameter(root, "/leds", "list");
+    for (int i = 0; i < m_pixels; i++)
+    {
+      pixels.push_back(ossia::create_parameter(
+          strip->get_node(), std::to_string(i), "rgb"));
+    }
+    if (m_fd >= 0)
+      m_timer.start([this] { update_function(); });
   }
 
   // Code adapted from https://github.com/hannescam/NeoSPI
@@ -81,7 +90,7 @@ struct led_protocol : public ossia::net::protocol_base
     return color;
   }
 
-  static auto RGB2BitBang(uint8_t r, uint8_t g, uint8_t b) noexcept
+  static auto rgb_to_bitbang(uint8_t r, uint8_t g, uint8_t b) noexcept
   {
     using namespace std;
     const auto r_array = int_to_neopixel(r);
@@ -104,18 +113,37 @@ struct led_protocol : public ossia::net::protocol_base
   bool
   push(const ossia::net::parameter_base& p, const ossia::value& v) override
   {
-    // FIXME: update a single pixel efficiently
-    auto val = v.target<std::vector<ossia::value>>();
-    if (!val)
-      return false;
+    if (&p == this->strip)
+    {
+      auto val = v.target<std::vector<ossia::value>>();
+      if (!val)
+        return false;
+      return true;
+    }
+    else
+    {
+    }
+    return true;
+  }
 
+  bool push_raw(const ossia::net::full_parameter_data&) override
+  {
+    return false;
+  }
+
+  bool observe(ossia::net::parameter_base&, bool) override { return false; }
+
+  bool update(ossia::net::node_base& node_base) override { return false; }
+
+  void update_function()
+  {
     m_bitbang_data.clear();
     m_bitbang_data.reserve(m_pixels * 24);
-    int N = std::min(m_pixels, (int)std::ssize(*val));
+    const int N = std::min(m_pixels, (int)std::ssize(pixels));
 
     for (int i = 0; i < N; i++)
     {
-      auto col = ossia::convert<ossia::vec3f>((*val)[i]);
+      auto col = ossia::convert<ossia::vec3f>(pixels[i]->value());
 
       auto rgb_col = ossia::rgb{col};
 
@@ -144,19 +172,7 @@ struct led_protocol : public ossia::net::protocol_base
     spi.speed_hz = m_speed * 8 * 1024;
     spi.bits_per_word = 8;
     ioctl(m_fd, SPI_IOC_MESSAGE(1), &spi);
-    return true;
   }
-
-  bool push_raw(const ossia::net::full_parameter_data&) override
-  {
-    return false;
-  }
-
-  bool observe(ossia::net::parameter_base&, bool) override { return false; }
-
-  bool update(ossia::net::node_base& node_base) override { return false; }
-
-  void update_function() { }
 
   ossia::net::network_context_ptr m_context;
   ossia::net::device_base* m_device{};
@@ -165,12 +181,9 @@ struct led_protocol : public ossia::net::protocol_base
   int m_pixels{};
   int m_speed{};
 
-  struct rgb
-  {
-    uint8_t r, g, b;
-  };
   std::vector<uint8_t> m_bitbang_data;
   ossia::net::parameter_base* strip{};
+  std::vector<ossia::net::parameter_base*> pixels;
   int m_fd{-1};
 };
 
