@@ -44,10 +44,14 @@ ProtocolSettingsWidget::ProtocolSettingsWidget(QWidget* parent)
   m_pixels = new QSpinBox{this};
   m_pixels->setRange(1, 65535);
 
+  m_format = new QComboBox{this};
+  m_format->addItems({"GRB", "RGB"});
+
   auto layout = new QFormLayout;
   layout->addRow(tr("Name"), m_deviceNameEdit);
   layout->addRow(tr("Device"), m_spiDevice);
   layout->addRow(tr("Pixels"), m_pixels);
+  layout->addRow(tr("Format"), m_format);
 
   setLayout(layout);
 }
@@ -63,6 +67,8 @@ Device::DeviceSettings ProtocolSettingsWidget::getSettings() const
   SpecificSettings settings{};
   settings.device = this->m_spiDevice->text();
   settings.num_pixels = this->m_pixels->value();
+  settings.format
+      = static_cast<NeoPixelsFormat>(this->m_format->currentIndex());
   s.deviceSpecificSettings = QVariant::fromValue(settings);
 
   return s;
@@ -76,5 +82,6 @@ void ProtocolSettingsWidget::setSettings(
       = settings.deviceSpecificSettings.value<SpecificSettings>();
   m_spiDevice->setText(specif.device);
   m_pixels->setValue(specif.num_pixels);
+  m_format->setCurrentIndex(static_cast<int>(specif.format));
 }
 }

@@ -5,11 +5,18 @@
 
 namespace Led
 {
+enum class NeoPixelsFormat
+{
+  GRB,
+  RGB
+};
+
 struct SpecificSettings
 {
     QString device;
     int num_pixels{12};
-    int speed{100};
+    int speed{800};
+    NeoPixelsFormat format{NeoPixelsFormat::GRB};
 };
 }
 
