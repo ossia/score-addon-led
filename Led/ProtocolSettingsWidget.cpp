@@ -38,12 +38,16 @@ ProtocolSettingsWidget::ProtocolSettingsWidget(QWidget* parent)
   m_deviceNameEdit = new State::AddressFragmentLineEdit{this};
   m_deviceNameEdit->setText("Led");
 
-  m_control = new QSpinBox{this};
-  m_control->setRange(1, 65535);
+  m_spiDevice = new QLineEdit{this};
+  m_spiDevice->setText("/dev/spidev0.0");
+
+  m_pixels = new QSpinBox{this};
+  m_pixels->setRange(1, 65535);
 
   auto layout = new QFormLayout;
   layout->addRow(tr("Name"), m_deviceNameEdit);
-  layout->addRow(tr("Control"), m_control);
+  layout->addRow(tr("Device"), m_spiDevice);
+  layout->addRow(tr("Pixels"), m_pixels);
 
   setLayout(layout);
 }
@@ -52,13 +56,13 @@ ProtocolSettingsWidget::~ProtocolSettingsWidget() { }
 
 Device::DeviceSettings ProtocolSettingsWidget::getSettings() const
 {
-  // TODO should be = m_settings to follow the other patterns.
   Device::DeviceSettings s;
   s.name = m_deviceNameEdit->text();
   s.protocol = ProtocolFactory::static_concreteKey();
 
   SpecificSettings settings{};
-  settings.control = this->m_control->value();
+  settings.device = this->m_spiDevice->text();
+  settings.num_pixels = this->m_pixels->value();
   s.deviceSpecificSettings = QVariant::fromValue(settings);
 
   return s;
@@ -70,6 +74,7 @@ void ProtocolSettingsWidget::setSettings(
   m_deviceNameEdit->setText(settings.name);
   const auto& specif
       = settings.deviceSpecificSettings.value<SpecificSettings>();
-  m_control->setValue(specif.control);
+  m_spiDevice->setText(specif.device);
+  m_pixels->setValue(specif.num_pixels);
 }
 }

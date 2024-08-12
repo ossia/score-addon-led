@@ -20,7 +20,7 @@ namespace Led
 
 QString ProtocolFactory::prettyName() const noexcept
 {
-  return QObject::tr("Led");
+  return QObject::tr("NeoPixel LEDs");
 }
 
 QString ProtocolFactory::category() const noexcept
@@ -50,6 +50,9 @@ const Device::DeviceSettings& ProtocolFactory::defaultSettings() const noexcept
     s.protocol = concreteKey();
     s.name = "Led";
     SpecificSettings settings;
+    settings.device = "/dev/spidev0.0";
+    settings.num_pixels = 12;
+    settings.speed = 100;
     s.deviceSpecificSettings = QVariant::fromValue(settings);
     return s;
   }();
@@ -79,6 +82,6 @@ bool ProtocolFactory::checkCompatibility(
     const Device::DeviceSettings& a,
     const Device::DeviceSettings& b) const noexcept
 {
-  return false;
+  return true;
 }
 }

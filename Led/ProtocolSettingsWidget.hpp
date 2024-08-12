@@ -26,6 +26,7 @@ public:
 
 private:
   QLineEdit* m_deviceNameEdit{};
-  QSpinBox* m_control{};
+  QLineEdit* m_spiDevice{};
+  QSpinBox* m_pixels{};
 };
 }

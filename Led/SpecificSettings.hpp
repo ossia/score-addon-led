@@ -7,7 +7,9 @@ namespace Led
 {
 struct SpecificSettings
 {
-  int control{1234};
+    QString device;
+    int num_pixels{12};
+    int speed{100};
 };
 }
 
