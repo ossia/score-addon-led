@@ -99,6 +99,7 @@ struct led_protocol : public ossia::net::protocol_base
       auto node = strip->create_child(std::to_string(i));
       auto param = node->create_parameter(ossia::val_type::VEC3F);
       param->set_unit(ossia::rgb_u{});
+      pixels.push_back(param);
     }
 
     if (m_fd >= 0)
