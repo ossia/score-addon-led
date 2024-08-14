@@ -27,6 +27,8 @@
 #include <unistd.h>
 #include <wobjectimpl.h>
 
+#include <span>
+
 W_OBJECT_IMPL(Led::DeviceImplementation)
 
 namespace Led
@@ -166,7 +168,6 @@ struct led_protocol : public ossia::net::protocol_base
       auto node = strip->create_child(std::to_string(i));
       node->set_parameter(std::make_unique<pixel_parameter>(
           *node, std::span<uint8_t, 3>(m_rgb_data.data() + i * 3, 3)));
-      // pixels.push_back(node->get_parameter());
     }
 
     if (m_fd >= 0)
