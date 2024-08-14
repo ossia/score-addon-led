@@ -7,11 +7,13 @@
 #include <score/document/DocumentContext.hpp>
 
 #include <ossia/detail/timer.hpp>
+#include <ossia/detail/triple_buffer.hpp>
 #include <ossia/network/base/device.hpp>
 #include <ossia/network/base/node.hpp>
 #include <ossia/network/base/parameter.hpp>
 #include <ossia/network/base/protocol.hpp>
 #include <ossia/network/common/complex_type.hpp>
+#include <ossia/network/common/device_parameter_t.hpp>
 #include <ossia/network/context.hpp>
 #include <ossia/network/generic/generic_device.hpp>
 
@@ -29,6 +31,69 @@ W_OBJECT_IMPL(Led::DeviceImplementation)
 
 namespace Led
 {
+class pixel_fill_parameter
+    : public ossia::net::device_parameter_t<ossia::vec3f>
+{
+public:
+  pixel_fill_parameter(ossia::net::node_base& node, std::span<uint8_t> buffer)
+      : device_parameter_t(node)
+      , m_buffer{buffer}
+  {
+  }
+
+  ~pixel_fill_parameter() = default;
+
+private:
+  void device_update_value() override
+  {
+    auto& col = m_current_value;
+
+    const uint8_t r = std::clamp(col[0], 0.f, 1.f) * 255.0f;
+    const uint8_t g = std::clamp(col[1], 0.f, 1.f) * 255.0f;
+    const uint8_t b = std::clamp(col[2], 0.f, 1.f) * 255.0f;
+
+    auto* const pix = m_buffer.data();
+    const int N = m_buffer.size() / 3;
+#pragma omp simd
+    for (int i = 0; i < N; i++)
+    {
+      pix[i * 3 + 0] = r;
+      pix[i * 3 + 1] = g;
+      pix[i * 3 + 2] = b;
+    }
+  }
+
+  std::span<uint8_t> m_buffer;
+};
+class pixel_parameter : public ossia::net::device_parameter_t<ossia::vec3f>
+{
+public:
+  pixel_parameter(ossia::net::node_base& node, std::span<uint8_t, 3> buffer)
+      : device_parameter_t(node)
+      , m_buffer{buffer}
+  {
+  }
+
+  ~pixel_parameter() = default;
+
+private:
+  void device_update_value() override
+  {
+    auto& col = m_current_value;
+    {
+      const uint8_t r = std::clamp(col[0], 0.f, 1.f) * 255.0f;
+      const uint8_t g = std::clamp(col[1], 0.f, 1.f) * 255.0f;
+      const uint8_t b = std::clamp(col[2], 0.f, 1.f) * 255.0f;
+
+      auto* const pixel = m_buffer.data();
+      pixel[0] = r;
+      pixel[1] = g;
+      pixel[2] = b;
+    }
+  }
+
+  std::span<uint8_t, 3> m_buffer;
+};
 
 // Code adapted from https://github.com/hannescam/NeoSPI
 static constexpr std::array<uint8_t, 8> int_to_neopixel(uint8_t val) noexcept
@@ -65,7 +130,6 @@ struct led_protocol : public ossia::net::protocol_base
       , m_speed{set.speed}
       , m_format{set.format}
   {
-
     using namespace std::literals;
     m_fd = ::open(set.device.toStdString().c_str(), O_RDWR);
     if (m_fd < 0)
@@ -93,13 +157,16 @@ struct led_protocol : public ossia::net::protocol_base
 
     auto& root = m_device->get_root_node();
 
+    auto fill = root.create_child("fill");
+    fill->set_parameter(
+        std::make_unique<pixel_fill_parameter>(*fill, m_rgb_data));
     strip = root.create_child("leds");
     for (int i = 0; i < m_pixels; i++)
     {
       auto node = strip->create_child(std::to_string(i));
-      auto param = node->create_parameter(ossia::val_type::VEC3F);
-      param->set_unit(ossia::rgb_u{});
-      pixels.push_back(param);
+      node->set_parameter(std::make_unique<pixel_parameter>(
+          *node, std::span<uint8_t, 3>(m_rgb_data.data() + i * 3, 3)));
+      // pixels.push_back(node->get_parameter());
     }
 
     if (m_fd >= 0)
@@ -132,6 +199,7 @@ struct led_protocol : public ossia::net::protocol_base
   bool
   push(const ossia::net::parameter_base& p, const ossia::value& v) override
   {
+
     return false;
   }
 
@@ -158,47 +226,39 @@ struct led_protocol : public ossia::net::protocol_base
 
   void update_function_rgb()
   {
-    const int N = std::min(m_pixels, (int)std::ssize(pixels));
+    const int N = m_pixels;
 
+#pragma omp simd
     for (int i = 0; i < N; i++)
     {
-      const auto& val = pixels[i]->value();
-      if (auto col = val.target<ossia::vec3f>())
-      {
-        // 1. ossia::vec3f to basic rgb
-        const uint8_t r = std::clamp((*col)[0], 0.f, 1.f) * 255.0f;
-        const uint8_t g = std::clamp((*col)[1], 0.f, 1.f) * 255.0f;
-        const uint8_t b = std::clamp((*col)[2], 0.f, 1.f) * 255.0f;
+      const auto* const src = m_rgb_data.data() + i * 3;
+      uint8_t r = src[0];
+      uint8_t g = src[1];
+      uint8_t b = src[2];
 
-        // 2. rgb to bitbangable rgb
-        uint8_t* data = m_bitbang_data.data() + i * 24;
-        std::copy_n(int_to_neopixel_table[r].data(), 8, data);
-        std::copy_n(int_to_neopixel_table[g].data(), 8, data + 8);
-        std::copy_n(int_to_neopixel_table[b].data(), 8, data + 16);
-      }
+      auto* const dst = m_bitbang_data.data() + i * 24;
+      std::copy_n(int_to_neopixel_table[r].data(), 8, dst);
+      std::copy_n(int_to_neopixel_table[g].data(), 8, dst + 8);
+      std::copy_n(int_to_neopixel_table[b].data(), 8, dst + 16);
     }
   }
 
   void update_function_grb()
   {
-    const int N = std::min(m_pixels, (int)std::ssize(pixels));
+    const int N = m_pixels;
 
+#pragma omp simd
     for (int i = 0; i < N; i++)
     {
-      const auto& val = pixels[i]->value();
-      if (auto col = val.target<ossia::vec3f>())
-      {
-        // 1. ossia::vec3f to basic rgb
-        const uint8_t r = std::clamp((*col)[0], 0.f, 1.f) * 255.0f;
-        const uint8_t g = std::clamp((*col)[1], 0.f, 1.f) * 255.0f;
-        const uint8_t b = std::clamp((*col)[2], 0.f, 1.f) * 255.0f;
+      const auto* const src = m_rgb_data.data() + i * 3;
+      uint8_t r = src[0];
+      uint8_t g = src[1];
+      uint8_t b = src[2];
 
-        // 2. rgb to bitbangable grb
-        uint8_t* data = m_bitbang_data.data() + i * 24;
-        std::copy_n(int_to_neopixel_table[g].data(), 8, data);
-        std::copy_n(int_to_neopixel_table[r].data(), 8, data + 8);
-        std::copy_n(int_to_neopixel_table[b].data(), 8, data + 16);
-      }
+      auto* const dst = m_bitbang_data.data() + i * 24;
+      std::copy_n(int_to_neopixel_table[g].data(), 8, dst);
+      std::copy_n(int_to_neopixel_table[r].data(), 8, dst + 8);
+      std::copy_n(int_to_neopixel_table[b].data(), 8, dst + 16);
     }
   }
 
@@ -210,9 +270,9 @@ struct led_protocol : public ossia::net::protocol_base
   int m_speed{};
   NeoPixelsFormat m_format{};
 
+  ossia::pod_vector<uint8_t> m_rgb_data;
   ossia::pod_vector<uint8_t> m_bitbang_data;
   ossia::net::node_base* strip{};
-  std::vector<ossia::net::parameter_base*> pixels;
   int m_fd{-1};
 };
 
