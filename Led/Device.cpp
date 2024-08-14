@@ -27,12 +27,66 @@
 #include <unistd.h>
 #include <wobjectimpl.h>
 
+#include <iostream>
 #include <span>
 
 W_OBJECT_IMPL(Led::DeviceImplementation)
 
 namespace Led
 {
+class pixel_vec_parameter : public ossia::net::device_parameter_t<std::string>
+{
+public:
+  pixel_vec_parameter(ossia::net::node_base& node, std::span<uint8_t> buffer)
+      : device_parameter_t(node)
+      , m_buffer{buffer}
+  {
+  }
+
+  ~pixel_vec_parameter() = default;
+
+  ossia::value set_value(const ossia::value& val) override
+  {
+    if (val.valid())
+    {
+      if (auto str = val.target<std::string>())
+      {
+        m_current_value = *str;
+      }
+      else if (auto vec = val.target<std::vector<ossia::value>>())
+      {
+        m_current_value.clear();
+        m_current_value.reserve(vec->size());
+        for (auto& val : *vec)
+        {
+          m_current_value.push_back(ossia::convert<int>(val));
+        }
+      }
+      else if (auto vec = val.target<ossia::vec3f>())
+      {
+        m_current_value.clear();
+        m_current_value.resize(3);
+        m_current_value[0] = (*vec)[0] * 255;
+        m_current_value[1] = (*vec)[1] * 255;
+        m_current_value[2] = (*vec)[2] * 255;
+      }
+      send(val);
+      device_update_value();
+    }
+
+    return m_current_value;
+  }
+
+private:
+  void device_update_value() override
+  {
+    auto& col = m_current_value;
+    int N = std::min(col.size(), m_buffer.size());
+    std::copy_n(col.begin(), N, m_buffer.begin());
+  }
+
+  std::span<uint8_t> m_buffer;
+};
 class pixel_fill_parameter
     : public ossia::net::device_parameter_t<ossia::vec3f>
 {
@@ -97,7 +151,7 @@ private:
   std::span<uint8_t, 3> m_buffer;
 };
 
-// Code adapted from https://github.com/hannescam/NeoSPI
+// https://www.hackster.io/RVLAD/neopixel-ws2812b-spi-driver-with-ada-on-stm32f4-discovery-d330ea
 static constexpr std::array<uint8_t, 8> int_to_neopixel(uint8_t val) noexcept
 {
   std::array<uint8_t, 8> color;
@@ -111,11 +165,11 @@ static constexpr std::array<uint8_t, 8> int_to_neopixel(uint8_t val) noexcept
   return color;
 }
 
-static constexpr std::array<std::array<uint8_t, 8>, 255> int_to_neopixel_table
+static constexpr std::array<std::array<uint8_t, 8>, 256> int_to_neopixel_table
     = []() constexpr
 {
-  std::array<std::array<uint8_t, 8>, 255> res;
-  for (uint8_t i = 0; i < 255; i++)
+  std::array<std::array<uint8_t, 8>, 256> res;
+  for (int i = 0; i < 256; i++)
     res[i] = int_to_neopixel(i);
   return res;
 }();
@@ -132,6 +186,7 @@ struct led_protocol : public ossia::net::protocol_base
       , m_speed{set.speed}
       , m_format{set.format}
   {
+    m_rgb_data.resize(m_pixels * 3);
     using namespace std::literals;
     m_fd = ::open(set.device.toStdString().c_str(), O_RDWR);
     if (m_fd < 0)
@@ -159,10 +214,13 @@ struct led_protocol : public ossia::net::protocol_base
 
     auto& root = m_device->get_root_node();
 
-    auto fill = root.create_child("fill");
+    strip = root.create_child("leds");
+    strip->set_parameter(
+        std::make_unique<pixel_vec_parameter>(*strip, m_rgb_data));
+
+    auto fill = strip->create_child("fill");
     fill->set_parameter(
         std::make_unique<pixel_fill_parameter>(*fill, m_rgb_data));
-    strip = root.create_child("leds");
     for (int i = 0; i < m_pixels; i++)
     {
       auto node = strip->create_child(std::to_string(i));

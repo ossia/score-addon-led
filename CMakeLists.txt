@@ -37,3 +37,22 @@ target_link_libraries(score_addon_led PUBLIC score_plugin_engine)
 
 # Target-specific options
 setup_score_plugin(score_addon_led)
+
+
+avnd_score_plugin_init(
+  BASE_TARGET score_addon_ledfx
+)
+
+avnd_score_plugin_add(
+  BASE_TARGET score_addon_ledfx
+  SOURCES
+    LedProcesses/LedFX.hpp
+  TARGET ledfx
+  MAIN_CLASS LedFX
+  NAMESPACE Led
+)
+avnd_score_plugin_finalize(
+  BASE_TARGET score_addon_ledfx
+  PLUGIN_VERSION 1
+  PLUGIN_UUID "706e49b7-6e22-4a4d-9f91-3c2a7563c072"
+)
