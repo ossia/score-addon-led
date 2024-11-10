@@ -14,6 +14,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QObject>
+#include <QUrl>
 
 namespace Led
 {
@@ -26,6 +27,11 @@ QString ProtocolFactory::prettyName() const noexcept
 QString ProtocolFactory::category() const noexcept
 {
   return StandardCategories::lights;
+}
+
+QUrl ProtocolFactory::manual() const noexcept
+{
+  return QUrl("https://ossia.io/score-docs/devices/led-device.html");
 }
 
 Device::DeviceEnumerators

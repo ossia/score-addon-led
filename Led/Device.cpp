@@ -258,7 +258,6 @@ struct led_protocol : public ossia::net::protocol_base
   bool
   push(const ossia::net::parameter_base& p, const ossia::value& v) override
   {
-
     return false;
   }
 
