@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.13 FATAL_ERROR)
 
 # Only Linux allows raw SPI access so far
-find_path(LINUX_HEADERS_INCLUDE_DIR linux/types.h)
+find_path(LINUX_HEADERS_INCLUDE_DIR linux/spi/spidev.h)
 if(NOT LINUX_HEADERS_INCLUDE_DIR)
   return()
 endif()
-if(APPLE OR EMSCRIPTEN OR WIN32)
+if(APPLE OR EMSCRIPTEN OR WIN32 OR BSD)
   return()
 endif()
 if(NOT TARGET score_lib_base)
@@ -39,20 +39,20 @@ target_link_libraries(score_addon_led PUBLIC score_plugin_engine)
 setup_score_plugin(score_addon_led)
 
 
-avnd_score_plugin_init(
-  BASE_TARGET score_addon_ledfx
-)
-
-avnd_score_plugin_add(
-  BASE_TARGET score_addon_ledfx
-  SOURCES
-    LedProcesses/LedFX.hpp
-  TARGET ledfx
-  MAIN_CLASS LedFX
-  NAMESPACE Led
-)
-avnd_score_plugin_finalize(
-  BASE_TARGET score_addon_ledfx
-  PLUGIN_VERSION 1
-  PLUGIN_UUID "706e49b7-6e22-4a4d-9f91-3c2a7563c072"
-)
+# avnd_score_plugin_init(
+#   BASE_TARGET score_addon_ledfx
+# )
+#
+# avnd_score_plugin_add(
+#   BASE_TARGET score_addon_ledfx
+#   SOURCES
+#     LedProcesses/LedFX.hpp
+#   TARGET ledfx
+#   MAIN_CLASS LedFX
+#   NAMESPACE Led
+# )
+# avnd_score_plugin_finalize(
+#   BASE_TARGET score_addon_ledfx
+#   PLUGIN_VERSION 1
+#   PLUGIN_UUID "706e49b7-6e22-4a4d-9f91-3c2a7563c072"
+# )
