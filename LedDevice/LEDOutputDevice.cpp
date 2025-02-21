@@ -467,6 +467,7 @@ struct LEDSenderE131Unicast : LEDSenderDMX
           [[unlikely]];
           a = 0;
           u++;
+          current_pkt = universes[u];
         }
       }
     }
@@ -474,10 +475,10 @@ struct LEDSenderE131Unicast : LEDSenderDMX
     boost::system::error_code ec;
     for (auto& packet : packets)
     {
+      int n = packet.frame.seq_number;
       packet.frame.seq_number++; // = seqnum;
       sock.send_to(
           boost::asio::const_buffer(&packet, sizeof(packet)), ep, 0, ec);
-      //seqnum++;
     }
   }
 
@@ -541,7 +542,7 @@ struct LedParentOutputNode : score::gfx::OutputNode
       , m_settings{set}
   {
     E131Config conf;
-    conf.host = "127.0.0.1";
+    conf.host = "192.168.0.190";
     conf.port = conf.default_port;
     conf.channels_per_universe = 510;
 
