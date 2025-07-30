@@ -40,6 +40,13 @@ public:
   ~LedOutputDevice();
 
 private:
+  void disconnect() override
+  {
+    Gfx::GfxOutputDevice::disconnect();
+    auto prev = std::move(m_dev);
+    m_dev = {};
+    deviceChanged(prev.get(), nullptr);
+  }
   bool reconnect() override;
   ossia::net::device_base* getDevice() const override { return m_dev.get(); }
 
@@ -74,7 +81,8 @@ struct LedOutputNode final : score::gfx::OutputNode
       , m_parent{parent}
       , m_settings{set}
   {
-    input.push_back(new score::gfx::Port{this, {}, score::gfx::Types::Image, {}});
+    input.push_back(
+        new score::gfx::Port{this, {}, score::gfx::Types::Image, {}});
   }
 
   ~LedOutputNode() { }
@@ -178,7 +186,92 @@ struct LedOutputNode final : score::gfx::OutputNode
 
 namespace
 {
+// FIXME RDM support: https://www.rdmprotocol.org/rdm/what-is-rdm/
+
 #pragma pack(push, 1)
+struct ddp_packet
+{
+  // General protocol specs
+  static constexpr int DDP_PORT = 4048;
+  static constexpr int DDP_MAX_DATALEN = (480 * 3);
+
+  // clang-format off
+  //                                                  v v x T S R Q P
+  static constexpr auto DDP_SET_FLAGS     = uint8_t{0b0'1'0'0'0'0'0'0};
+  static constexpr auto DDP_PUSH_FLAGS    = uint8_t{0b0'1'0'0'0'0'0'1};
+  static constexpr auto DDP_QUERY_FLAGS   = uint8_t{0b0'1'0'0'0'0'1'0};
+  static constexpr auto DDP_REPLY_FLAGS   = uint8_t{0b0'1'0'0'0'1'0'0};
+  static constexpr auto DDP_STORAGE_FLAGS = uint8_t{0b0'1'0'0'1'0'0'0};
+  // clang-format on
+
+  uint8_t flags = DDP_SET_FLAGS;
+
+  // to increment
+  //                 x x x x n n n n
+  uint8_t sequence{0b0'0'0'0'0'0'0'0};
+
+  //                                              C R T T T S S S
+  static constexpr auto DDP_RGB8_TYPE = uint8_t{0b0'0'0'0'1'0'1'1};
+  uint8_t data_type = DDP_RGB8_TYPE;
+
+  // ID
+  static constexpr int DDP_ID_DISPLAY = 1;
+  static constexpr int DDP_ID_CONFIG = 250;
+  static constexpr int DDP_ID_STATUS = 251;
+  uint8_t src_dest_id{DDP_ID_DISPLAY};
+
+  uint32_t data_offset{};
+
+  uint16_t data_length{};
+
+  uint8_t timecode
+      [DDP_MAX_DATALEN
+       + 4]; // either 32-bit timecode or directly data if T isn't set
+};
+
+struct art_dmx_packet
+{
+  char id[8] = {'A', 'r', 't', '-', 'N', 'e', 't', '\0'};
+  uint8_t opcode[2] = {0x00, 0x50};
+  uint8_t version[2] = {0x00, 0x0e};
+
+  uint8_t seq = 0;
+  uint8_t phys = 0;
+  uint8_t lo_uni = 0;
+  uint8_t hi_uni = 0;
+  uint16_t length = 2;
+  uint8_t data[512];
+};
+
+// Note: per-spec, should be sent in broadcast.
+// But in wifi it works worse, and all tested devices seem to support it without broadcast.
+static constexpr struct art_sync_packet
+{
+  char id[8] = {'A', 'r', 't', '-', 'N', 'e', 't', '\0'};
+  uint8_t opcode[2] = {0x00, 0x52};
+  uint8_t protver[2] = {0x00, 0x0e};
+
+  uint8_t aux1 = 0;
+  uint8_t aux2 = 0;
+} art_sync_packet_data;
+
+struct art_timecode_packet
+{
+  char id[8] = {'A', 'r', 't', '-', 'N', 'e', 't', '\0'};
+  uint8_t opcode[2];
+  uint8_t protver[2];
+
+  uint8_t filler1{};
+  uint8_t streamid{};
+  uint8_t frames{};
+  uint8_t seconds{};
+  uint8_t minutes{};
+  uint8_t hours{};
+  uint8_t type{};
+};
+
+// FIXME https://auschristmaslighting.com/wiki/E1-31-Sync
+
 struct e131_acn_root_layer
 {                          /* ACN Root Layer: 38 bytes */
   uint16_t preamble_size;  /* Preamble Size */
@@ -298,6 +391,20 @@ static int e131_pkt_init(
 static_assert(sizeof(e131_packet) == 638);
 }
 
+struct ArtNetConfig
+{
+  static constexpr uint16_t default_port = 6454;
+  std::string host;
+  int port{default_port};
+  int channels_per_universe{512};
+  bool multicast{};
+  enum send_mode
+  {
+    always,
+    only_updated
+  };
+};
+
 struct E131Config
 {
   static constexpr uint16_t default_port = 5568;
@@ -312,6 +419,7 @@ struct E131Config
     only_updated
   };
 };
+
 struct LEDConfigDMX
 {
   int start_universe{};
@@ -336,6 +444,18 @@ struct LEDConfigDMX
 struct LEDDMX
 {
   LEDConfigDMX config;
+  std::vector<uint8_t> arr;
+};
+
+struct LEDConfigDDP
+{
+  int pixels{};
+  int pixel_stride{};
+  int byte_offset{};
+};
+struct LEDDDP
+{
+  LEDConfigDDP config;
   std::vector<uint8_t> arr;
 };
 
@@ -375,6 +495,331 @@ struct LEDSenderDMX
   }
 
   std::vector<LEDDMX> led_config;
+};
+
+struct LEDSenderDDPUnicast_OnePacket
+{
+  std::vector<LEDConfigDDP> led_config;
+  ArtNetConfig configuration;
+  boost::asio::io_context ctx;
+  boost::asio::ip::udp::socket sock;
+  boost::asio::ip::udp::endpoint ep;
+
+  explicit LEDSenderDDPUnicast_OnePacket(
+      const ArtNetConfig& conf,
+      std::span<LEDConfigDDP> leds)
+      : configuration{conf}
+      , sock{ctx}
+      , ep{boost::asio::ip::make_address("192.168.0.190"), (uint16_t)4048}
+  {
+    packet.flags = packet.DDP_PUSH_FLAGS;
+    packet.data_type = 1;
+    // 0. store the stripe setup
+    int nmax = 0;
+    led_config.reserve(leds.size());
+    for (const auto& stripe : leds)
+    {
+      led_config.push_back(stripe);
+      nmax += stripe.pixels * 3;
+      SCORE_ASSERT(nmax <= ddp_packet::DDP_MAX_DATALEN);
+      SCORE_ASSERT(
+          stripe.byte_offset + stripe.pixels * 3
+          <= ddp_packet::DDP_MAX_DATALEN);
+      // SCORE_ASSERT(all the stripes are contiguous)
+    }
+
+    packet.data_offset = 0; // fixme.. should be offset of first stripe?
+    packet.data_length
+        = boost::asio::detail::socket_ops::host_to_network_short(nmax);
+    std::fill_n(packet.timecode, sizeof(packet.timecode), 0);
+
+    // 2. Open the socket
+    boost::system::error_code ec;
+    sock.open(boost::asio::ip::udp::v6(), ec);
+    sock.set_option(boost::asio::ip::v6_only{false}, ec);
+    sock.set_option(boost::asio::ip::udp::socket::reuse_address(true), ec);
+    sock.set_option(boost::asio::socket_base::broadcast(true), ec);
+  }
+
+  // 1. We write for each LED their data
+  void set(int led, std::span<const uint8_t> rgba)
+  {
+    SCORE_ASSERT(led >= 0);
+    SCORE_ASSERT(std::ssize(led_config) > led);
+    SCORE_ASSERT(!rgba.empty());
+    SCORE_ASSERT(rgba.size() % 4 == 0);
+    auto& stripe = led_config[led];
+    SCORE_ASSERT(std::ssize(rgba) == (stripe.pixels * 4));
+
+    int offset_in_packet = stripe.byte_offset;
+#pragma omp simd
+    for (int offset_in_stripe = 0; offset_in_stripe < rgba.size();
+         offset_in_stripe += 4)
+    {
+      packet.timecode[offset_in_packet++] = rgba[offset_in_stripe + 0];
+      packet.timecode[offset_in_packet++] = rgba[offset_in_stripe + 1];
+      packet.timecode[offset_in_packet++] = rgba[offset_in_stripe + 2];
+    }
+  }
+
+  void send_packet(ddp_packet& packet)
+  {
+    packet.sequence = (seqnum++) & 0b00001111;
+    seqnum = packet.sequence;
+
+    boost::system::error_code ec;
+    sock.send_to(
+        boost::asio::const_buffer(&packet, sizeof(packet)), ep, 0, ec);
+  }
+
+  void push()
+  {
+    if (this->led_config.empty())
+      return;
+
+    send_packet(packet);
+  }
+
+  ddp_packet packet;
+  uint8_t seqnum{};
+};
+
+struct LEDSenderDDPUnicast_MultiPacket
+{
+  std::vector<LEDConfigDDP> led_config; // here we do not need to store
+  ArtNetConfig configuration;
+  boost::asio::io_context ctx;
+  boost::asio::ip::udp::socket sock;
+  boost::asio::ip::udp::endpoint ep;
+
+  explicit LEDSenderDDPUnicast_MultiPacket(
+      const ArtNetConfig& conf,
+      std::span<LEDConfigDDP> leds)
+      : configuration{conf}
+      , sock{ctx}
+      , ep{boost::asio::ip::make_address("192.168.0.190"), (uint16_t)4048}
+  {
+    // 0. store the stripe setup
+    led_config.assign(leds.begin(), leds.end());
+
+    // 2. Open the socket
+    boost::system::error_code ec;
+    sock.open(boost::asio::ip::udp::v6(), ec);
+    sock.set_option(boost::asio::ip::v6_only{false}, ec);
+    sock.set_option(boost::asio::ip::udp::socket::reuse_address(true), ec);
+    sock.set_option(boost::asio::socket_base::broadcast(true), ec);
+  }
+
+  void send_packet(ddp_packet& packet)
+  {
+    seqnum = packet.sequence = (seqnum++) & 0b00001111;
+    boost::system::error_code ec;
+    sock.send_to(
+        boost::asio::const_buffer(&packet, sizeof(packet)), ep, 0, ec);
+  }
+
+  // 1. We write for each LED their data
+  void set(int led, std::span<const uint8_t> rgba)
+  {
+    SCORE_ASSERT(led >= 0);
+    SCORE_ASSERT(std::ssize(led_config) > led);
+    SCORE_ASSERT(!rgba.empty());
+    SCORE_ASSERT(rgba.size() % 4 == 0);
+    auto& stripe = led_config[led];
+    SCORE_ASSERT(std::ssize(rgba) == (stripe.pixels * 4));
+
+    ddp_packet packet;
+    packet.data_type = 1;
+
+    int offset_in_input = 0;
+    int offset_in_packet = 0;
+
+    for (int offset_in_stripe = 0; offset_in_stripe < rgba.size();
+         offset_in_stripe += 4)
+    {
+      packet.timecode[offset_in_packet++] = rgba[offset_in_stripe + 0];
+      packet.timecode[offset_in_packet++] = rgba[offset_in_stripe + 1];
+      packet.timecode[offset_in_packet++] = rgba[offset_in_stripe + 2];
+
+      if (offset_in_packet > (ddp_packet::DDP_MAX_DATALEN - 3))
+      {
+        packet.flags = packet.DDP_SET_FLAGS;
+        packet.data_offset
+            = boost::asio::detail::socket_ops::host_to_network_long(
+                offset_in_input);
+        packet.data_length
+            = boost::asio::detail::socket_ops::host_to_network_short(
+                offset_in_packet);
+        send_packet(packet);
+        offset_in_input += offset_in_packet;
+        offset_in_packet = 0;
+      }
+    }
+
+    if (offset_in_packet > 0)
+    {
+      packet.flags = packet.DDP_PUSH_FLAGS;
+      packet.data_offset
+          = boost::asio::detail::socket_ops::host_to_network_long(
+              offset_in_input);
+      packet.data_length
+          = boost::asio::detail::socket_ops::host_to_network_short(
+              offset_in_packet);
+      send_packet(packet);
+    }
+  }
+
+  void push()
+  {
+    if (this->led_config.empty())
+      return;
+
+    ddp_packet packet;
+    packet.data_type = 1;
+    packet.flags = packet.DDP_PUSH_FLAGS;
+    packet.data_offset = 0;
+    packet.data_length = 0;
+    send_packet(packet);
+  }
+
+  uint8_t seqnum{};
+};
+
+struct LEDSenderArtNetUnicast : LEDSenderDMX
+{
+  ArtNetConfig configuration;
+  boost::asio::io_context ctx;
+  boost::asio::ip::udp::socket sock;
+  boost::asio::ip::udp::endpoint ep;
+
+  explicit LEDSenderArtNetUnicast(
+      const ArtNetConfig& conf,
+      std::span<LEDConfigDMX> leds)
+      : LEDSenderDMX{leds}
+      , configuration{conf}
+      , sock{ctx}
+      , ep{boost::asio::ip::make_address(conf.host), (uint16_t)conf.port}
+  {
+    // 1. Check how many DMX universes we're going to need
+    for (auto& stripe : this->led_config)
+    {
+      int u = stripe.config.start_universe;
+      // ex. RGB without spacing: stride == 3
+      int channels = stripe.config.start_address
+                     + stripe.config.pixels * stripe.config.pixel_stride;
+      while (channels > conf.channels_per_universe)
+      {
+        u++;
+        channels -= conf.channels_per_universe;
+      }
+
+      for (int i = stripe.config.start_universe; i <= u; i++)
+        universes.emplace(i, nullptr);
+    }
+
+    // 2. Pre-create the packet headers
+    packets.resize(universes.size());
+    {
+      int i = 0;
+      for (auto& [uni, ptr] : universes)
+      {
+        auto& packet = packets[i];
+        ptr = &packet;
+
+        packet.lo_uni = uni; // art-net is 0-based
+        packet.hi_uni = 0;
+        packet.length = boost::asio::detail::socket_ops::host_to_network_short(
+            conf.channels_per_universe);
+        i++;
+      }
+    }
+
+    // 2. Open the socket
+    boost::system::error_code ec;
+    sock.open(boost::asio::ip::udp::v6(), ec);
+    sock.set_option(boost::asio::ip::v6_only{false}, ec);
+    sock.set_option(boost::asio::ip::udp::socket::reuse_address(true), ec);
+    sock.set_option(boost::asio::socket_base::broadcast(true), ec);
+  }
+
+  void push()
+  {
+    // 1. Copy all the LED data in their universe
+    const auto channels_per_universe
+        = this->configuration.channels_per_universe;
+
+    for (auto& stripe : led_config)
+    {
+      int u = stripe.config.start_universe;
+      int a = stripe.config.start_address;
+      while (a > channels_per_universe)
+      {
+        a -= channels_per_universe;
+        u++;
+      }
+
+      SCORE_ASSERT(universes.contains(u));
+      SCORE_ASSERT(universes[u]);
+      auto* current_pkt = universes[u];
+
+      auto* bytes = stripe.arr.data();
+      auto* end = bytes + stripe.arr.size();
+      while (bytes != end)
+      {
+        if (a < channels_per_universe)
+        {
+          [[likely]];
+          current_pkt->data[a] = *bytes;
+          bytes++;
+          a++;
+        }
+        else
+        {
+          [[unlikely]];
+          a = 0;
+          u++;
+          current_pkt = universes[u];
+        }
+      }
+    }
+
+    boost::system::error_code ec;
+    for (auto& packet : packets)
+    {
+      packet.seq = seqnum++;
+      if (packet.seq == 0)
+        packet.seq = seqnum++;
+
+      sock.send_to(
+          boost::asio::const_buffer(
+              &packet, sizeof(packet) - 512 + channels_per_universe),
+          ep,
+          0,
+          ec);
+    }
+  }
+
+  ossia::flat_map<int, art_dmx_packet*> universes;
+  std::vector<art_dmx_packet> packets;
+  uint8_t seqnum{};
+};
+
+struct LEDSenderArtNetUnicast_ArtSync : LEDSenderArtNetUnicast
+{
+  using LEDSenderArtNetUnicast::LEDSenderArtNetUnicast;
+
+  void push()
+  {
+    LEDSenderArtNetUnicast::push();
+    boost::system::error_code ec;
+
+    sock.send_to(
+        boost::asio::const_buffer(
+            &art_sync_packet_data, sizeof(art_sync_packet)),
+        ep,
+        0,
+        ec);
+  }
 };
 
 struct LEDSenderE131Unicast : LEDSenderDMX
@@ -437,13 +882,15 @@ struct LEDSenderE131Unicast : LEDSenderDMX
   void push()
   {
     // 1. Copy all the LED data in their universe
+    const auto channels_per_universe
+        = this->configuration.channels_per_universe;
     for (auto& stripe : led_config)
     {
       int u = stripe.config.start_universe;
       int a = stripe.config.start_address;
-      while (a > this->configuration.channels_per_universe)
+      while (a > channels_per_universe)
       {
-        a -= this->configuration.channels_per_universe;
+        a -= channels_per_universe;
         u++;
       }
 
@@ -455,7 +902,7 @@ struct LEDSenderE131Unicast : LEDSenderDMX
       auto* end = bytes + stripe.arr.size();
       while (bytes != end)
       {
-        if (a < this->configuration.channels_per_universe)
+        if (a < channels_per_universe)
         {
           [[likely]];
           current_pkt->dmp.prop_val[1 + a] = *bytes;
@@ -475,10 +922,14 @@ struct LEDSenderE131Unicast : LEDSenderDMX
     boost::system::error_code ec;
     for (auto& packet : packets)
     {
-      int n = packet.frame.seq_number;
-      packet.frame.seq_number++; // = seqnum;
+      [[maybe_unused]] int n = packet.frame.seq_number;
+      packet.frame.seq_number++;
       sock.send_to(
-          boost::asio::const_buffer(&packet, sizeof(packet)), ep, 0, ec);
+          boost::asio::const_buffer(
+              &packet, sizeof(packet) - 512 + channels_per_universe),
+          ep,
+          0,
+          ec);
     }
   }
 
@@ -524,6 +975,7 @@ struct LEDSenderE131Multicast : LEDSenderDMX
   }
   void push()
   {
+    // FIXME
     // boost::system::error_code ec;
     // m_socket.send_to(boost::asio::const_buffer(data, sz), ep, 0, ec);
   }
@@ -533,7 +985,9 @@ struct LedParentOutputNode : score::gfx::OutputNode
 {
   std::function<void()> m_update;
   ossia::net::node_base& m_root;
-  LEDSenderE131Unicast* sender{};
+  //LEDSenderArtNetUnicast* sender{};
+  LEDSenderDDPUnicast_OnePacket* sender{};
+  //LEDSenderArtNetUnicast_ArtSync* sender{};
 
   explicit LedParentOutputNode(
       ossia::net::node_base& root, const SharedOutputSettings& set)
@@ -541,19 +995,30 @@ struct LedParentOutputNode : score::gfx::OutputNode
       , m_root{root}
       , m_settings{set}
   {
-    E131Config conf;
+    ArtNetConfig conf;
     conf.host = "192.168.0.190";
     conf.port = conf.default_port;
     conf.channels_per_universe = 510;
 
+#define DDP 1
+#if ARTNET
     std::vector<LEDConfigDMX> stripes;
     for (int i = 0; i < 8; i++)
-      stripes.push_back(LEDConfigDMX{
-          .start_universe = 0,
-          .start_address = i * 32 * 3,
-          .pixels = 32,
-          .pixel_stride = 3});
-    sender = new LEDSenderE131Unicast(conf, stripes);
+      stripes.push_back(
+          LEDConfigDMX{
+              .start_universe = 0,
+              .start_address = i * 32 * 3,
+              .pixels = 32,
+              .pixel_stride = 3});
+    sender = new LEDSenderArtNetUnicast_ArtSync(conf, stripes);
+#elif DDP
+    std::vector<LEDConfigDDP> stripes;
+    for (int i = 0; i < 8; i++)
+      stripes.push_back(
+          LEDConfigDDP{
+              .pixels = 32, .pixel_stride = 3, .byte_offset = i * 32 * 3});
+    sender = new LEDSenderDDPUnicast_OnePacket(conf, stripes);
+#endif
   }
 
   ~LedParentOutputNode() { }
@@ -704,6 +1169,7 @@ bool LedOutputDevice::reconnect()
       m_dev = std::make_unique<led_output_device>(
           set, std::unique_ptr<gfx_protocol_base>(m_protocol),
           m_settings.name.toStdString());
+      deviceChanged(nullptr, m_dev.get());
     }
   }
   catch(std::exception& e)
