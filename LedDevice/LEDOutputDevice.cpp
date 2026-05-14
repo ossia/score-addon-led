@@ -6,6 +6,7 @@
 #include <Gfx/Graph/NodeRenderer.hpp>
 #include <Gfx/Graph/OutputNode.hpp>
 #include <Gfx/Graph/RenderList.hpp>
+#include <Gfx/Graph/RenderState.hpp>
 #include <Gfx/InvertYRenderer.hpp>
 
 #include <score/gfx/OpenGL.hpp>
@@ -130,23 +131,17 @@ struct LedOutputNode final : score::gfx::OutputNode
 
   score::gfx::RenderList* renderer() const override { return m_renderer.lock().get(); }
 
-  void createOutput(
-      score::gfx::GraphicsApi graphicsApi, std::function<void()> onReady,
-      std::function<void()> onUpdate, std::function<void()> onResize) override
+  void createOutput(score::gfx::OutputConfiguration conf) override
   {
-    m_renderState = std::make_shared<score::gfx::RenderState>();
-    m_update = onUpdate;
-
-    m_renderState->surface = QRhiGles2InitParams::newFallbackSurface();
-    QRhiGles2InitParams params;
-    params.fallbackSurface = m_renderState->surface;
-    score::GLCapabilities caps;
-    caps.setupFormat(params.format);
-    m_renderState->rhi = QRhi::create(QRhi::OpenGLES2, &params, {});
-    m_renderState->renderSize = QSize(m_settings.width, m_settings.height);
+    m_renderState = score::gfx::createRenderState(
+        conf.graphicsApi, QSize(m_settings.width, m_settings.height), nullptr);
+    if(!m_renderState || !m_renderState->rhi)
+    {
+      qWarning() << "LedOutputNode: failed to create QRhi";
+      m_renderState.reset();
+      return;
+    }
     m_renderState->outputSize = m_renderState->renderSize;
-    m_renderState->api = score::gfx::GraphicsApi::OpenGL;
-    m_renderState->version = caps.qShaderVersion;
 
     auto rhi = m_renderState->rhi;
     m_texture = rhi->newTexture(
@@ -159,10 +154,27 @@ struct LedOutputNode final : score::gfx::OutputNode
     m_renderTarget->setRenderPassDescriptor(m_renderState->renderPassDescriptor);
     m_renderTarget->create();
 
-    onReady();
+    if(conf.onReady)
+      conf.onReady();
   }
 
-  void destroyOutput() override { }
+  void destroyOutput() override
+  {
+    if(!m_renderState)
+      return;
+
+    delete m_renderTarget;
+    m_renderTarget = nullptr;
+
+    delete m_renderState->renderPassDescriptor;
+    m_renderState->renderPassDescriptor = nullptr;
+
+    delete m_texture;
+    m_texture = nullptr;
+
+    m_renderState->destroy();
+    m_renderState.reset();
+  }
 
   std::shared_ptr<score::gfx::RenderState> renderState() const override
   {
@@ -1068,15 +1080,17 @@ struct LedParentOutputNode : score::gfx::OutputNode
 
   score::gfx::RenderList* renderer() const override { return nullptr; }
 
-  void createOutput(
-      score::gfx::GraphicsApi graphicsApi, std::function<void()> onReady,
-      std::function<void()> onUpdate, std::function<void()> onResize) override
+  void createOutput(score::gfx::OutputConfiguration conf) override
   {
     m_renderState = std::make_shared<score::gfx::RenderState>();
-    onReady();
+    if(conf.onReady)
+      conf.onReady();
   }
 
-  void destroyOutput() override { }
+  void destroyOutput() override
+  {
+    m_renderState.reset();
+  }
 
   std::shared_ptr<score::gfx::RenderState> renderState() const override
   {
