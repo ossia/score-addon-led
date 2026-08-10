@@ -3,6 +3,7 @@
 #include <score/plugins/FactorySetup.hpp>
 
 #include <Led/ProtocolFactory.hpp>
+#include <LedDevice/LEDOutputDevice.hpp>
 
 score_addon_led::score_addon_led() { }
 
@@ -15,7 +16,9 @@ score_addon_led::factories(
 {
   return instantiate_factories<
       score::ApplicationContext,
-      FW<Device::ProtocolFactory, Led::ProtocolFactory>>(ctx, key);
+      FW<Device::ProtocolFactory,
+         Led::ProtocolFactory,
+         Gfx::LedOutputProtocolFactory>>(ctx, key);
 }
 
 #include <score/plugins/PluginInstances.hpp>
