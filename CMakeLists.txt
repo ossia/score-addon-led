@@ -9,7 +9,7 @@ if(APPLE OR EMSCRIPTEN OR WIN32 OR BSD)
   return()
 endif()
 if(NOT TARGET score_lib_base)
-  include("${SCORE_SOURCE_DIR}/cmake/ScoreExternalAddon.cmake")
+  include(ScoreExternalAddon)
 endif()
 
 project(score_addon_led LANGUAGES CXX)
