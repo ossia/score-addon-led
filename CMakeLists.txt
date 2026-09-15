@@ -19,6 +19,11 @@ score_common_setup()
 
 # Creation of the library
 add_library(score_addon_led
+  # gpu-based
+  LedDevice/LEDOutputDevice.hpp
+  LedDevice/LEDOutputDevice.cpp
+
+  # neopixels spi
   Led/Device.cpp
   Led/Device.hpp
   Led/ProtocolFactory.cpp
@@ -33,7 +38,8 @@ add_library(score_addon_led
 )
 
 # Link
-target_link_libraries(score_addon_led PUBLIC score_plugin_engine)
+target_link_libraries(score_addon_led PUBLIC score_plugin_engine score_plugin_gfx)
+
 
 # Target-specific options
 setup_score_plugin(score_addon_led)
