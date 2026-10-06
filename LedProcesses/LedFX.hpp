@@ -18,7 +18,7 @@ struct LedFX
 {
   halp_meta(name, "LedFX")
   halp_meta(c_name, "LedFX")
-  halp_meta(category, "Led")
+  halp_meta(category, "Visuals/LED")
   halp_meta(author, "Jean-Michaël Celerier")
   halp_meta(description, "LedFX")
   halp_meta(uuid, "62bc0879-0b3d-436f-bdd6-7d56db3c2a2f")
