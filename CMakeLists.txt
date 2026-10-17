@@ -1,18 +1,19 @@
 cmake_minimum_required(VERSION 3.13 FATAL_ERROR)
 
-# Only Linux allows raw SPI access so far
-find_path(LINUX_HEADERS_INCLUDE_DIR linux/spi/spidev.h)
-if(NOT LINUX_HEADERS_INCLUDE_DIR)
-  return()
-endif()
-if(APPLE OR EMSCRIPTEN OR WIN32 OR BSD)
-  return()
-endif()
 if(NOT TARGET score_lib_base)
   include(ScoreExternalAddon)
 endif()
 
 project(score_addon_led LANGUAGES CXX)
+
+# Only Linux allows raw SPI access so far
+if(APPLE OR EMSCRIPTEN OR WIN32 OR BSD)
+  return()
+endif()
+find_path(LINUX_HEADERS_INCLUDE_DIR linux/spi/spidev.h)
+if(NOT LINUX_HEADERS_INCLUDE_DIR)
+  return()
+endif()
 
 # General initialization
 score_common_setup()
